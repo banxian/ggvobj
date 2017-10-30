@@ -19,6 +19,9 @@ int idaapi accept_file(linput_t *li, char fileformatname[MAX_FILE_FORMAT_NAME], 
     return 0;
 }
 
+typedef std::map<uint32_t, uint32_t> DualIntMap;
+typedef qvector<uint16_t> UShortVec;
+
 void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname*/)
 {
     size_t filesize = qlsize(li);
@@ -34,6 +37,9 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
     const sectionrecord_s* secptr = (const sectionrecord_s*)(objbuf + header->sectionrecoffsetC);
     int extcount = 0;
     unsigned int extaddr = 0;
+    DualIntMap AddrSizeMap;
+    DualIntMap AddrEndMap;
+    UShortVec SecBaseVec;
     for (int sectionindex = 0; sectionindex < header->sectioncount38; sectionindex++, secptr++) {
         const char* secname = strtable + secptr->namedelta;
         bool segcreated = false;
@@ -44,8 +50,19 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
             segpos += segptr->datasize; // append
         }
         int segdatasize = segpos;
+        // keyis bank+address?
+        uint32_t key = secptr->banknumber << 16 | secptr->baseaddress;
         // TODO: may have multiple global/init_data located at same 0x0 address?!
         msg("found section [%s], banknumber:%d, baseaddress:%04X, length:%04X, segment count:%d\n", secname, secptr->banknumber, secptr->baseaddress, secptr->length, secptr->segmentscount);
+        DualIntMap::iterator it = AddrSizeMap.find(key);
+        if (it != AddrSizeMap.end()) {
+            msg("found previous section with same baseaddress and banknumber. current used space in section is %04X\n", it->second);
+            segdatasize += it->second;
+            SecBaseVec.push_back(it->second);
+        } else {
+            AddrSizeMap[key] = segdatasize;
+            SecBaseVec.push_back(0);
+        }
         bool isram = secptr->baseaddress < 0x4000;
         unsigned recend = isram?0x4000:0xC000;
         int btn = askbuttons_c("~R~ecommend", "~S~mallest", "~O~riginal", 1, 
@@ -67,43 +84,48 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
         if (recend > extaddr) {
             extaddr = recend;
         }
-        segpos = 0;
-        segptr -= secptr->segmentscount;
+        AddrEndMap[key] = recend;
+    }
+    secptr -= header->sectioncount38;
+    DualIntMap SecPosMap;
+    for (int sectionindex = 0; sectionindex < header->sectioncount38; sectionindex++, secptr++) {
+        const char* secname = strtable + secptr->namedelta;
+        uint32_t key = secptr->banknumber << 16 | secptr->baseaddress;
+        DualIntMap::iterator posit = SecPosMap.find(key);
+        bool isram = secptr->baseaddress < 0x4000;
+        const segmentrecord_s* segptr = (const segmentrecord_s*)(objbuf + secptr->segmentsoffset);
+        uint32_t segpos = (posit == SecPosMap.end())?0:posit->second;
         for (int segindex = 0; segindex < secptr->segmentscount; segindex++, segptr++) {
             const char* segname = strtable + segptr->namedelta;
-            //if (!segcreated) {
-            //    // have data? 4040 + 8000 = C040?!
-            //    segcreated = add_segm(0, secptr->baseaddress, secptr->baseaddress + secptr->length, segname, "CODE");
-            //    if (secptr->baseaddress + secptr->length > extaddr) {
-            //        extaddr = secptr->baseaddress + secptr->length;
-            //    }
-            //}
             add_segm(0, secptr->baseaddress + segpos, secptr->baseaddress + segpos + segptr->datasize, segname, isram?"RAM":"CODE");
-            // mem2base
             //file2base(li, segrec->dataoffset, secres->baseaddress + segpos, secres->baseaddress + segpos + segrec->datasize, FILEREG_PATCHABLE);
             mem2base(objbuf + segptr->dataoffset, secptr->baseaddress + segpos, secptr->baseaddress + segpos + segptr->datasize, FILEREG_PATCHABLE);
             segpos += segptr->datasize; // append
             extcount += segptr->reloccount;
         }
+        SecPosMap[key] = segpos;
+        uint32_t recend = AddrEndMap[key];
         // if recend have extra space from segpos, 
-        if (recend > secptr->baseaddress + segdatasize) {
-            add_segm(0, secptr->baseaddress + segdatasize, recend, secname, isram?"RAM":"CODE");
+        if (recend > secptr->baseaddress + segpos) {
+            add_segm(0, secptr->baseaddress + segpos, recend, secname, isram?"RAM":"CODE");
         }
     }
+    // Create names
     secptr -= header->sectioncount38;
     const labelrecord_s* label10ptr = (const labelrecord_s*)(objbuf + header->labeloffset10);
     const symbolrecord_s* lpsymtable20 = (const symbolrecord_s*)(objbuf + header->symboloffset20);
     for (int symindex = 0; symindex < header->symbolcount3A; symindex++, label10ptr++) {
         const symbolrecord_s* symrecex = &lpsymtable20[label10ptr->symbolindex];
         const char* symname = strtable + symrecex->namedelta;
-        unsigned symea = secptr[symrecex->secindex].baseaddress + symrecex->delta;
+        //unsigned symea = secptr[symrecex->secindex].baseaddress + symrecex->delta;
+        unsigned symea = SecBaseVec[symrecex->secindex] + symrecex->delta;
         set_name(symea, symname, SN_CHECK | (symrecex->flag8 == 0x40?SN_PUBLIC:SN_NON_PUBLIC)); // TODO: local
         //rev20ptr[rev10ptr->quickoffset];//
         if (symrecex->flag8 == 0x40) {
             add_entry(symea, symea, symname, false);
         }
     }
-    // Create undef?
+    // Create undef and do reloc?
     int extpos = 0;
     if (extcount) {
         add_segm(0, extaddr, extaddr + extcount * 2, "UNDEF", "XTRN"); // ?? ??
