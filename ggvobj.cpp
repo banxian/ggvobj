@@ -58,10 +58,10 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
         if (it != AddrSizeMap.end()) {
             msg("found previous section with same baseaddress and banknumber. current used space in section is %04X\n", it->second);
             segdatasize += it->second;
-            SecBaseVec.push_back(it->second);
+            SecBaseVec.push_back(secptr->baseaddress + it->second);
         } else {
             AddrSizeMap[key] = segdatasize;
-            SecBaseVec.push_back(0);
+            SecBaseVec.push_back(secptr->baseaddress);
         }
         bool isram = secptr->baseaddress < 0x4000;
         unsigned recend = isram?0x4000:0xC000;
