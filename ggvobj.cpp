@@ -20,7 +20,7 @@ int idaapi accept_file(linput_t *li, char fileformatname[MAX_FILE_FORMAT_NAME], 
 }
 
 typedef std::map<uint32_t, uint32_t> DualIntMap;
-typedef qvector<uint16_t> UShortVec;
+//typedef qvector<uint16_t> UShortVec;
 
 void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname*/)
 {
@@ -39,7 +39,7 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
     unsigned int extaddr = 0;
     DualIntMap AddrSizeMap;
     DualIntMap AddrEndMap;
-    UShortVec SecBaseVec;
+    //UShortVec SecBaseVec;
     for (int sectionindex = 0; sectionindex < header->sectioncount38; sectionindex++, secptr++) {
         const char* secname = strtable + secptr->namedelta;
         bool segcreated = false;
@@ -50,7 +50,7 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
             segpos += segptr->datasize; // append
         }
         int segdatasize = segpos;
-        // keyis bank+address?
+        // key is bank+address?
         uint32_t key = secptr->banknumber << 16 | secptr->baseaddress;
         // TODO: may have multiple global/init_data located at same 0x0 address?!
         msg("found section [%s], banknumber:%d, baseaddress:%04X, length:%04X, segment count:%d\n", secname, secptr->banknumber, secptr->baseaddress, secptr->length, secptr->segmentscount);
@@ -58,10 +58,10 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
         if (it != AddrSizeMap.end()) {
             msg("found previous section with same baseaddress and banknumber. current used space in section is %04X\n", it->second);
             segdatasize += it->second;
-            SecBaseVec.push_back(secptr->baseaddress + it->second);
+            //SecBaseVec.push_back(secptr->baseaddress + it->second);
         } else {
             AddrSizeMap[key] = segdatasize;
-            SecBaseVec.push_back(secptr->baseaddress);
+            //SecBaseVec.push_back(secptr->baseaddress);
         }
         bool isram = secptr->baseaddress < 0x4000;
         unsigned recend = isram?0x4000:0xC000;
