@@ -15,17 +15,17 @@ struct objheader_s
     uint32_t offset1C; // other table
     uint32_t symboloffset20; // both ext/local
     unsigned int rev24;
-    unsigned int rev28;
+    uint32_t somesize28;
     unsigned int rev2C;
     unsigned int rev30;
     uint32_t segheadoffset34; // redundancy?
     uint16_t sectioncount38;
     uint16_t exportcount3A;
     uint16_t rev3C;
-    uint16_t rev3E;
-    uint16_t strcount40; // or symbolcount?
+    uint16_t allsrcinfosize3E;
+    uint16_t symbolcount40; // contains label/data/func/segmentname
     uint16_t rev42;
-    uint16_t rev44; // 02 or 03?
+    uint16_t sourcecount44; // include c/asm/h
     uint16_t rev46; // CD CD
 };
 
@@ -77,5 +77,11 @@ struct exportrecord_s {
     uint32_t namedelta;
     uint32_t symbolindex;
 };
+
+struct sourcerecord_s {
+    uint32_t namedelta;
+    uint32_t rev4;
+};
+
 
 #endif

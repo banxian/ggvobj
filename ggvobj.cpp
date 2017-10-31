@@ -35,7 +35,7 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
 
     const char* strtable = objbuf + header->stringtableoffset18;
     const sectionrecord_s* secptr = (const sectionrecord_s*)(objbuf + header->sectionrecoffsetC);
-    int extcount = 0;
+    int reloccount = 0;
     unsigned int extaddr = 0;
     DualIntMap AddrSizeMap;
     DualIntMap AddrEndMap;
@@ -104,7 +104,7 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
             uint32_t secsegkey = sectionindex << 16 | segindex;
             SegBaseMap.insert(std::make_pair(secsegkey, secptr->baseaddress + segpos)) ;// 
             segpos += segptr->datasize; // append
-            extcount += segptr->reloccount;
+            reloccount += segptr->reloccount;
         }
         SecPosMap[key] = segpos;
         uint32_t recend = AddrEndMap[key];
@@ -113,16 +113,43 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
             add_segm(0, secptr->baseaddress + segpos, recend, secname, isram?"RAM":"CODE");
         }
     }
+    unsigned extcount = 0;
     // Create names
+    const symbolrecord_s* symtableptr = (const symbolrecord_s*)(objbuf + header->symboloffset20);
+    for (int symindex = 0; symindex < header->symbolcount40; symindex++, symtableptr++) {
+        const char* symname = strtable + symtableptr->namedelta;
+        // data/label: 10
+        // func: 40
+        // ext: 1
+        if (symtableptr->flag8 == 0x40 || symtableptr->flag8 == 0x10) {
+            uint32_t secsegkey = symtableptr->secindex << 16 | symtableptr->segindex;
+            unsigned symea = SegBaseMap[secsegkey] + symtableptr->delta;
+            // check duplicate?!
+            qstring oldname;
+            // documents show the return value is "success?!" but always nonzero(-1 or length)
+            if (get_true_name(&oldname, symea) > 0 && !oldname.empty()) {
+                // add comment?
+                //msg("%04X: %s -> %s\n", symea, oldname.c_str(), symname);
+                msg("duplicate name added to address %04X. changed from \"%s\" to \"%s\"\n", symea, oldname.c_str(), symname);
+                append_cmt(symea, oldname.c_str(), true);
+            }
+            set_name(symea, symname, SN_CHECK | (symtableptr->flag8==0x40?SN_PUBLIC:0));
+        }
+        if (symtableptr->flag8 == 1) {
+            extcount++;
+        }
+    }
+    msg("real external symbol count: %d, reloc entry: %d\n", extcount, reloccount);
+    // Add exports
     secptr -= header->sectioncount38;
     const exportrecord_s* label10ptr = (const exportrecord_s*)(objbuf + header->expoffset10);
     const symbolrecord_s* lpsymtable20 = (const symbolrecord_s*)(objbuf + header->symboloffset20);
-    for (int expindex = 0; expindex < header->exportcount3A; expindex++, label10ptr++) {
+    for (int symindex = 0; symindex < header->exportcount3A; symindex++, label10ptr++) {
         const symbolrecord_s* symrecex = &lpsymtable20[label10ptr->symbolindex];
         const char* symname = strtable + symrecex->namedelta;
         uint32_t secsegkey = symrecex->secindex << 16 | symrecex->segindex;
         unsigned symea = SegBaseMap[secsegkey] + symrecex->delta;
-        set_name(symea, symname, SN_CHECK | SN_PUBLIC); // TODO: restore local label from reloc record?
+        //set_name(symea, symname, SN_CHECK | SN_PUBLIC); // TODO: restore local label from reloc record?
         //rev20ptr[rev10ptr->quickoffset];//
         add_entry(symea, symea, symname, false);
         if (symrecex->flag8 == 0x40) {
@@ -130,10 +157,31 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
             add_func(symea, BADADDR);
         }
     }
-    // Create undef and do reloc?
+    // Create undef symbols
     int extpos = 0;
     if (extcount) {
         add_segm(0, extaddr, extaddr + extcount * 2, "UNDEF", "XTRN"); // ?? ??
+        symtableptr -= header->symbolcount40;
+        for (int symindex = 0; symindex < header->symbolcount40; symindex++, symtableptr++) {
+            const char* symname = strtable + symtableptr->namedelta;
+            if (symtableptr->flag8 == 1) {
+                unsigned target = get_name_ea(BADADDR, symname);//extaddr + extpos;
+                if (target == BADADDR) {
+                    if (set_name(extaddr + extpos, symname, SN_CHECK | SN_PUBLIC)) {
+                        target = extaddr + extpos;
+                    } else  {
+                        msg("create extern name \"%s\" failed!\n", symname);
+                    }
+                    extpos += 2; // leave empty entry
+                }
+            }
+        }
+    }
+    // Create undef and do reloc?
+    if (extcount) {
+        // reset
+        extaddr += extpos;
+        extpos = 0;
         for (int sectionindex = 0; sectionindex < header->sectioncount38; sectionindex++, secptr++) {
             const segmentrecord_s* segptr = (const segmentrecord_s*)(objbuf + secptr->segmentsoffset);
             int segpos = 0;
@@ -142,15 +190,30 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
                 const relocrecord_s* relocptr = (const relocrecord_s*)(objbuf + segptr->relocoffset);
                 for (int relocindex = 0; relocindex < segptr->reloccount; relocindex++, relocptr++) {
                     const char* extname = strtable + lpsymtable20[relocptr->extlink].namedelta;
+                    unsigned target;
+                    if (lpsymtable20[relocptr->extlink].flag8 == 0x51) {
+                        // delta is target?
+                        target = lpsymtable20[relocptr->extlink].delta;
+                        msg("symbol \"%s\" is an Exxx immediate target. and not in extern\n", extname);
+                        append_cmt(segbegin + relocptr->reloc, extname, true);
+                    } else {
+                        target = get_name_ea(BADADDR, extname);
+                    }
                     // TODO: check exists use map?
-                    unsigned target = get_name_ea(BADADDR, extname);//extaddr + extpos;
+                    //unsigned target = get_name_ea(BADADDR, extname);//extaddr + extpos;
                     if (target == BADADDR) {
+                        uint32_t secsegkey = lpsymtable20[relocptr->extlink].secindex << 16 | lpsymtable20[relocptr->extlink].segindex;
+                        target = SegBaseMap[secsegkey] + lpsymtable20[relocptr->extlink].delta;
+                        msg("symbol \"%s\" missed in name list. maybe overwrite by another symbol.\n", extname);
+                        // workaround?
+                        /*add_segm(0, extaddr, extaddr + ++extcount * 2, "UNDEF2", "XTRN"); // ?? ??
                         if (set_name(extaddr + extpos, extname, SN_CHECK | SN_PUBLIC)) {
                             target = extaddr + extpos;
+                            msg("BUGME: recreate \"%s\" as extern name.\n", extname);
                         } else  {
-                            msg("create extern name \"%s\" failed!\n", extname);
+                            msg("BUGME: recreate extern name \"%s\" failed!\n", extname);
                         }
-                        extpos += 2; // leave empty entry
+                        extpos += 2; // leave empty entry*/
                     }
                     put_word(segbegin + relocptr->reloc, target); // useful
                     fixup_data_t fix;
