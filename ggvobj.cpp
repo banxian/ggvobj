@@ -65,7 +65,7 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
         }
         bool isram = secptr->baseaddress < 0x4000;
         unsigned recend = isram?0x4000:0xC000;
-        int btn = askbuttons_c("~R~ecommend", "~S~mallest", "~O~riginal", 1, 
+        int btn = askbuttons_c("~R~ecommend", "~S~mallest", "~O~riginal", ASKBTN_YES, 
             "The section [%s] have original address range %04X to %04X, real segments filled up to %04X, Recommend end address is %04X\n", 
             secname,
             secptr->baseaddress,
@@ -87,7 +87,8 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
         AddrEndMap[key] = recend;
     }
     secptr -= header->sectioncount38;
-    DualIntMap SecPosMap;
+    DualIntMap SecPosMap; // for combined sections, record previous segpos
+    DualIntMap SegBaseMap; // for symbolrecord sec/seg lookup
     for (int sectionindex = 0; sectionindex < header->sectioncount38; sectionindex++, secptr++) {
         const char* secname = strtable + secptr->namedelta;
         uint32_t key = secptr->banknumber << 16 | secptr->baseaddress;
@@ -100,6 +101,8 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
             add_segm(0, secptr->baseaddress + segpos, secptr->baseaddress + segpos + segptr->datasize, segname, isram?"RAM":"CODE");
             //file2base(li, segrec->dataoffset, secres->baseaddress + segpos, secres->baseaddress + segpos + segrec->datasize, FILEREG_PATCHABLE);
             mem2base(objbuf + segptr->dataoffset, secptr->baseaddress + segpos, secptr->baseaddress + segpos + segptr->datasize, FILEREG_PATCHABLE);
+            uint32_t secsegkey = sectionindex << 16 | segindex;
+            SegBaseMap.insert(std::make_pair(secsegkey, secptr->baseaddress + segpos)) ;// 
             segpos += segptr->datasize; // append
             extcount += segptr->reloccount;
         }
@@ -112,17 +115,19 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
     }
     // Create names
     secptr -= header->sectioncount38;
-    const labelrecord_s* label10ptr = (const labelrecord_s*)(objbuf + header->labeloffset10);
+    const exportrecord_s* label10ptr = (const exportrecord_s*)(objbuf + header->expoffset10);
     const symbolrecord_s* lpsymtable20 = (const symbolrecord_s*)(objbuf + header->symboloffset20);
-    for (int symindex = 0; symindex < header->symbolcount3A; symindex++, label10ptr++) {
+    for (int expindex = 0; expindex < header->exportcount3A; expindex++, label10ptr++) {
         const symbolrecord_s* symrecex = &lpsymtable20[label10ptr->symbolindex];
         const char* symname = strtable + symrecex->namedelta;
-        //unsigned symea = secptr[symrecex->secindex].baseaddress + symrecex->delta;
-        unsigned symea = SecBaseVec[symrecex->secindex] + symrecex->delta;
-        set_name(symea, symname, SN_CHECK | (symrecex->flag8 == 0x40?SN_PUBLIC:SN_NON_PUBLIC)); // TODO: local
+        uint32_t secsegkey = symrecex->secindex << 16 | symrecex->segindex;
+        unsigned symea = SegBaseMap[secsegkey] + symrecex->delta;
+        set_name(symea, symname, SN_CHECK | SN_PUBLIC); // TODO: restore local label from reloc record?
         //rev20ptr[rev10ptr->quickoffset];//
+        add_entry(symea, symea, symname, false);
         if (symrecex->flag8 == 0x40) {
-            add_entry(symea, symea, symname, false);
+            // try make function?
+            add_func(symea, BADADDR);
         }
     }
     // Create undef and do reloc?
@@ -148,12 +153,12 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
                         extpos += 2; // leave empty entry
                     }
                     put_word(segbegin + relocptr->reloc, target); // useful
-                    fixup_data_t reloc;
-                    reloc.type = FIXUP_OFF16;
-                    reloc.off = target;
-                    reloc.sel = 0; //
-                    reloc.displacement = target - (segbegin + relocptr->reloc);
-                    //set_fixup(segbegin + extptr->reloc, &reloc); // useless
+                    fixup_data_t fix;
+                    fix.type = target >= extaddr? FIXUP_OFF16 | FIXUP_EXTDEF:FIXUP_OFF16;
+                    fix.sel = 0; //
+                    fix.off = target;
+                    fix.displacement = 0; // target - (segbegin + relocptr->reloc);
+                    set_fixup(segbegin + relocptr->reloc, &fix); // useless
                     msg("set relocation for %04X to %04X (%s)\n", segbegin + relocptr->reloc, target, extname);
                 }
                 segpos += segptr->datasize; // append

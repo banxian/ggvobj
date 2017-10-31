@@ -9,7 +9,7 @@ struct objheader_s
     unsigned int rev4; // 00 00 00 00
     uint32_t objsize8;
     uint32_t sectionrecoffsetC; // always48
-    uint32_t labeloffset10;
+    uint32_t expoffset10;
     unsigned int rev14;
     uint32_t stringtableoffset18;
     uint32_t offset1C; // other table
@@ -20,7 +20,7 @@ struct objheader_s
     unsigned int rev30;
     uint32_t segheadoffset34; // redundancy?
     uint16_t sectioncount38;
-    uint16_t symbolcount3A;
+    uint16_t exportcount3A;
     uint16_t rev3C;
     uint16_t rev3E;
     uint16_t strcount40; // or symbolcount?
@@ -67,13 +67,13 @@ struct symbolrecord_s
     uint32_t namedelta;
     uint16_t rev4;
     uint16_t rev6;
-    uint16_t flag8; // function|label?
+    uint16_t flag8; // function|data?
     uint16_t secindex;
-    uint16_t revC;
-    uint16_t delta; // in seg?
+    uint16_t segindex;
+    uint16_t delta; // in seg
 };
 
-struct labelrecord_s {
+struct exportrecord_s {
     uint32_t namedelta;
     uint32_t symbolindex;
 };
