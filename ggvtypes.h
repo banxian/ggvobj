@@ -55,11 +55,11 @@ struct segmentrecord_s
 struct relocrecord_s
 {
     uint32_t flag0;
-    uint16_t rev4;
-    uint16_t reloc;     // of segment
+    uint16_t type;
+    uint16_t refdelta;  // of segment
     uint16_t extlink;   // in export symbol
     uint16_t revA;
-    uint32_t revC; // of file
+    uint32_t revC;      // TODO: lib?
 };
 
 struct symbolrecord_s

@@ -195,7 +195,7 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
                         // delta is target?
                         target = lpsymtable20[relocptr->extlink].delta;
                         msg("symbol \"%s\" is an Exxx immediate target. and not in extern\n", extname);
-                        append_cmt(segbegin + relocptr->reloc, extname, true);
+                        append_cmt(segbegin + relocptr->refdelta, extname, true);
                     } else {
                         target = get_name_ea(BADADDR, extname);
                     }
@@ -215,14 +215,28 @@ void idaapi load_file(linput_t *li, ushort neflag, const char * /*fileformatname
                         }
                         extpos += 2; // leave empty entry*/
                     }
-                    put_word(segbegin + relocptr->reloc, target); // useful
+                    // TODO: type?
+                    uchar fixtype = FIXUP_OFF16;
+                    if (relocptr->type == 3) {
+                        // #<(L3)
+                        put_byte(segbegin + relocptr->refdelta, target & 0xFF); // useful
+                        fixtype = FIXUP_LOW8;
+                    } else if (relocptr->type == 2) {
+                        // #>(L3)
+                        put_byte(segbegin + relocptr->refdelta, target >> 8); // useful
+                        fixtype = FIXUP_HI8;
+                    } else if (relocptr->type == 1) {
+                        put_word(segbegin + relocptr->refdelta, target); // useful
+                    } else {
+                        msg("%s have unknown reloc type:%04X\n", extname, relocptr->type);
+                    }
                     fixup_data_t fix;
-                    fix.type = target >= extaddr? FIXUP_OFF16 | FIXUP_EXTDEF:FIXUP_OFF16;
+                    fix.type = target >= extaddr? (fixtype | FIXUP_EXTDEF):fixtype;
                     fix.sel = 0; //
                     fix.off = target;
                     fix.displacement = 0; // target - (segbegin + relocptr->reloc);
-                    set_fixup(segbegin + relocptr->reloc, &fix); // useless
-                    msg("set relocation for %04X to %04X (%s)\n", segbegin + relocptr->reloc, target, extname);
+                    set_fixup(segbegin + relocptr->refdelta, &fix); // useless
+                    msg("set relocation for %04X to %04X (%s)\n", segbegin + relocptr->refdelta, target, extname);
                 }
                 segpos += segptr->datasize; // append
             }
